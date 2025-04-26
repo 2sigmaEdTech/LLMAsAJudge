@@ -1,20 +1,53 @@
-# Supervised Fine-Tuning Project
+# LLM-as-a-Fuzzy-Judge: Fine-Tuning LLM for Clinical Evaluation
 
-This project provides a framework for fine-tuning pretrained language models for supervised tasks using the labeled data in Excel files.
+This project implements a framework for fine-tuning large language models as clinical evaluation judges using fuzzy logic criteria.
+
+## Project Overview
+
+The LLM-as-a-Fuzzy-Judge project fine-tunes models to evaluate clinical interactions based on four key fuzzy criteria:
+
+1. **Professionalism** (3 levels):
+   - 1. Unprofessional
+   - 2. Borderline
+   - 3. Appropriate
+
+2. **Medical Relevance** (3 levels):
+   - 1. Irrelevant
+   - 2. Partially relevant
+   - 3. Relevant
+
+3. **Ethical Behavior** (5 levels):
+   - 1. Dangerous
+   - 2. Unsafe
+   - 3. Questionable
+   - 4. Mostly safe
+   - 5. Safe
+
+4. **Contextual Distraction** (4 levels):
+   - 1. Highly distracting
+   - 2. Moderately distracting
+   - 3. Questionable
+   - 4. Not distracting
 
 ## Project Structure
 
 ```
 ├── data/
-│   ├── raw/              # Original Excel files
-│   └── processed/        # Processed and split data (CSV)
+│   ├── raw/              # Original Excel files with labeled interactions
+│   └── processed/        # Processed data for each criterion (CSV)
 ├── notebooks/
 │   ├── csv_transform.ipynb      # CSV transformation notebook
 │   └── data_exploration.ipynb   # Data exploration notebook
+├── scripts/              # Helper scripts for data exploration
 ├── src/
 │   ├── data/             # Data processing utilities
 │   ├── models/           # Model definitions and training
 │   └── utils/            # Helper functions and visualization
+├── outputs/              # Trained models and results
+│   ├── professionalism/  # Professionalism criterion models
+│   ├── relevance/        # Medical Relevance criterion models
+│   ├── ethics/           # Ethical Behavior criterion models
+│   └── distraction/      # Contextual Distraction criterion models
 ├── main.py               # Main script to run the full pipeline
 ├── requirements.txt      # Project dependencies
 ├── .gitignore            # Git ignore file
@@ -29,32 +62,31 @@ This project provides a framework for fine-tuning pretrained language models for
 pip install -r requirements.txt
 ```
 
-2. Ensure your Excel files are in the `data/raw/` directory.
+2. Ensure your Excel files with labeled data are in the `data/raw/` directory.
 
 ## Usage
 
 ### Data Exploration
 
-The project includes a Jupyter notebook for exploring the data:
+The project includes scripts for exploring the data:
 
 ```bash
-jupyter notebook notebooks/data_exploration.ipynb
-```
-
-### CSV Transformation
-
-To transform Excel files to CSV format:
-
-```bash
-jupyter notebook notebooks/csv_transform.ipynb
+python scripts/explore_data.py
+python scripts/check_labels.py
 ```
 
 ### Training and Evaluation
 
-Run the main script to process data, train a model, and evaluate it:
+Run the main script to process data, train the models for all criteria, and evaluate them:
 
 ```bash
-python main.py --text_col [TEXT_COLUMN] --label_col [LABEL_COLUMN]
+python main.py
+```
+
+To train a model for a specific criterion only:
+
+```bash
+python main.py --criterion professionalism
 ```
 
 Command-line arguments:
@@ -63,67 +95,39 @@ Command-line arguments:
 - `--processed_dir`: Directory to save processed data (default: 'data/processed')
 - `--output_dir`: Directory to save model outputs (default: 'outputs')
 - `--model_name`: Pretrained model name from Hugging Face (default: 'bert-base-uncased')
-- `--num_labels`: Number of target labels (default: 2)
 - `--batch_size`: Training batch size (default: 8)
 - `--epochs`: Number of training epochs (default: 3)
 - `--learning_rate`: Learning rate for optimizer (default: 2e-5)
-- `--text_col`: Column name for text inputs (default: 'text')
-- `--label_col`: Column name for labels (default: 'label')
+- `--criterion`: Train model for a specific criterion only ('professionalism', 'relevance', 'ethics', 'distraction')
+- `--max_length`: Maximum sequence length for tokenization (default: 128)
 
-Example:
+Example with custom parameters:
 
 ```bash
-python main.py --model_name "distilbert-base-uncased" --epochs 5 --text_col "content" --label_col "category"
+python main.py --model_name "distilbert-base-uncased" --epochs 5 --max_length 256
 ```
 
 ## Customization
 
 You can customize the project by:
 
-1. Modifying the `DataLoader` class in `src/data/data_loader.py` to fit your data requirements
+1. Modifying the `DataLoader` class in `src/data/data_loader.py` to adapt to different data formats or criteria
 2. Extending the `BaseModel` class in `src/models/model.py` for specific model architectures
 3. Adding visualization functions in `src/utils/visualization.py`
 
+## Data Format
+
+The expected Excel file format contains the following key columns:
+
+- `User Message`: The text content to be evaluated
+- `Professionalism`: The professionalism rating (e.g., "3. Appropriate")
+- `Medical Relevance`: The medical relevance rating (e.g., "2. Partially Relevant")
+- `Ethics`: The ethical behavior rating (e.g., "5. Safe")
+- `Contextual Distraction`: The contextual distraction rating (e.g., "4. Not Distracting")
+
 ## Git Version Control
 
-This project has been set up with Git version control but excludes raw data files, processed data, and model outputs to keep the repository size manageable. 
-
-### Raw Data Management
-
-Raw data files are excluded from version control. To share the raw data with collaborators, consider:
-
-1. Using a data versioning system like DVC (Data Version Control)
-2. Sharing data via a secure file sharing service
-3. Creating a documented process for data acquisition
-
-### First-time Git Setup
-
-If you're setting up a new repository:
-
-```bash
-# Initialize the repository (already done)
-git init
-
-# Add all files except those in .gitignore
-git add .
-
-# Make your first commit
-git commit -m "Initial project setup"
-
-# Add a remote repository if needed
-git remote add origin <repository-url>
-git push -u origin main
-```
-
-### .gitignore
-
-The included `.gitignore` file excludes:
-- Raw and processed data files
-- Model outputs and checkpoints
-- Python build artifacts
-- Environment files
-- IDE-specific files
-- Jupyter Notebook checkpoints
+This project uses Git version control but excludes raw data files to keep the repository manageable. See the `.gitignore` file for details on excluded files.
 
 ## License
 

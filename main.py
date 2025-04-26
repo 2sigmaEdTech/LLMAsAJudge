@@ -12,7 +12,7 @@ from src.utils.visualization import (
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Supervised fine-tuning project')
+    parser = argparse.ArgumentParser(description='LLM-as-a-Fuzzy-Judge: Fine-tuning for clinical evaluation')
     parser.add_argument('--data_dir', type=str, default='data/raw',
                         help='Directory containing raw data files')
     parser.add_argument('--processed_dir', type=str, default='data/processed',
@@ -21,20 +21,130 @@ def parse_args():
                         help='Directory to save model outputs')
     parser.add_argument('--model_name', type=str, default='bert-base-uncased',
                         help='Pretrained model name from Hugging Face')
-    parser.add_argument('--num_labels', type=int, default=2,
-                        help='Number of target labels')
     parser.add_argument('--batch_size', type=int, default=8,
                         help='Training batch size')
     parser.add_argument('--epochs', type=int, default=3,
                         help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=2e-5,
                         help='Learning rate for optimizer')
-    parser.add_argument('--text_col', type=str, default='text',
-                        help='Column name for text inputs')
-    parser.add_argument('--label_col', type=str, default='label',
-                        help='Column name for labels')
+    parser.add_argument('--criterion', type=str, default=None, choices=['professionalism', 'relevance', 'ethics', 'distraction'],
+                        help='Train model for a specific criterion only (default: train all)')
+    parser.add_argument('--max_length', type=int, default=128,
+                        help='Maximum sequence length for tokenization')
     
     return parser.parse_args()
+
+def train_criterion_model(criterion, data_loader, args):
+    """
+    Train a model for a specific fuzzy criterion.
+    
+    Args:
+        criterion: The criterion to train for ('professionalism', 'relevance', 'ethics', 'distraction')
+        data_loader: DataLoader instance
+        args: Command line arguments
+        
+    Returns:
+        Path to the saved model
+    """
+    print(f"\n=== Processing {criterion.title()} Criterion ===")
+    
+    # Create criterion-specific output directories
+    criterion_processed_dir = os.path.join(args.processed_dir, criterion)
+    criterion_output_dir = os.path.join(args.output_dir, criterion)
+    os.makedirs(criterion_processed_dir, exist_ok=True)
+    os.makedirs(criterion_output_dir, exist_ok=True)
+    
+    # Get the appropriate number of classes for this criterion
+    num_classes = data_loader.get_num_classes(criterion)
+    print(f"Number of classes for {criterion}: {num_classes}")
+    
+    # Step 1: Preprocess the data for this criterion
+    print(f"Preprocessing data for {criterion}...")
+    processed_data = data_loader.preprocess_data(criterion=criterion)
+    print(f"Processed data shape: {processed_data.shape}")
+    
+    # Step 2: Split the data
+    print(f"Splitting data for {criterion}...")
+    train_df, val_df, test_df = data_loader.split_data(processed_data, criterion=criterion)
+    
+    # Step 3: Save processed data
+    data_loader.save_processed_data(train_df, val_df, test_df, criterion_processed_dir, criterion=criterion)
+    
+    # Step 4: Plot label distribution
+    label_col = data_loader.get_label_column(criterion)
+    if label_col in train_df.columns:
+        plot_label_distribution(train_df[label_col], f'{criterion.title()} Training Distribution')
+    
+    # Step 5: Initialize model
+    print(f"\n=== Training model for {criterion.title()} ===")
+    model = BaseModel(
+        model_name=args.model_name,
+        num_labels=num_classes
+    )
+    
+    # Step 6: Prepare data for training
+    text_col = data_loader.get_text_column()
+    train_loader, val_loader = model.prepare_data(
+        train_df, 
+        val_df,
+        text_col=text_col,
+        label_col=label_col,
+        batch_size=args.batch_size,
+        max_length=args.max_length
+    )
+    
+    # Step 7: Train model
+    history = model.train(
+        train_loader,
+        val_loader,
+        epochs=args.epochs,
+        learning_rate=args.learning_rate,
+        output_dir=criterion_output_dir
+    )
+    
+    # Step 8: Plot training history
+    plot_training_history(history)
+    
+    # Step 9: Evaluate on test data
+    print(f"\n=== Evaluating {criterion.title()} model ===")
+    best_model_dir = os.path.join(criterion_output_dir, 'best_model')
+    if os.path.exists(best_model_dir):
+        model.load_model(best_model_dir)
+    
+    test_loader, _ = model.prepare_data(
+        test_df,
+        text_col=text_col,
+        label_col=label_col,
+        batch_size=args.batch_size,
+        max_length=args.max_length
+    )
+    
+    test_loss, test_acc = model.evaluate(test_loader)
+    print(f"{criterion.title()} Test Loss: {test_loss:.4f}")
+    print(f"{criterion.title()} Test Accuracy: {test_acc:.4f}")
+    
+    # Step 10: Generate confusion matrix and classification report
+    test_texts = test_df[text_col].tolist()
+    test_preds = model.predict(test_texts)
+    test_labels = test_df[label_col].tolist()
+    
+    # Use criterion-specific class names
+    if criterion == 'professionalism':
+        class_names = ['Unprofessional', 'Borderline', 'Appropriate']
+    elif criterion == 'relevance':
+        class_names = ['Irrelevant', 'Partially relevant', 'Relevant']
+    elif criterion == 'ethics':
+        class_names = ['Dangerous', 'Unsafe', 'Questionable', 'Mostly safe', 'Safe']
+    elif criterion == 'distraction':
+        class_names = ['Highly distracting', 'Moderately distracting', 'Questionable', 'Not distracting']
+    else:
+        class_names = [str(i) for i in range(num_classes)]
+        
+    plot_confusion_matrix(test_labels, test_preds, class_names)
+    plot_classification_report(test_labels, test_preds, class_names)
+    
+    print(f"\n=== {criterion.title()} model saved to {best_model_dir} ===")
+    return best_model_dir
 
 def main():
     """Main function to run the full workflow."""
@@ -45,12 +155,12 @@ def main():
     os.makedirs(args.processed_dir, exist_ok=True)
     os.makedirs(args.output_dir, exist_ok=True)
     
-    print("=== Loading and processing data ===")
+    print("=== Loading data ===")
     # Initialize data loader
     data_loader = DataLoader(args.data_dir)
     
     # Load Excel files
-    data_dict = data_loader.load_excel_files(pattern="*.xlsx")
+    data_dict = data_loader.load_excel_files(pattern="fuzzy.coding.data*.xlsx")
     
     # Merge dataframes
     merged_data = data_loader.merge_dataframes(data_dict)
@@ -61,76 +171,28 @@ def main():
     
     print(f"Merged data shape: {merged_data.shape}")
     
-    # Preprocess data
-    processed_data = data_loader.preprocess_data(merged_data)
-    print(f"Processed data shape: {processed_data.shape}")
+    # Define the criteria to process
+    criteria = ['professionalism', 'relevance', 'ethics', 'distraction']
     
-    # Split data
-    train_df, val_df, test_df = data_loader.split_data(processed_data)
+    # If a specific criterion is specified, only process that one
+    if args.criterion:
+        if args.criterion not in criteria:
+            print(f"Error: Unknown criterion '{args.criterion}'. Available: {criteria}")
+            return
+        criteria = [args.criterion]
     
-    # Save processed data
-    data_loader.save_processed_data(train_df, val_df, test_df, args.processed_dir)
+    # Train a model for each criterion
+    models = {}
+    for criterion in criteria:
+        model_path = train_criterion_model(criterion, data_loader, args)
+        models[criterion] = model_path
     
-    # Plot label distribution
-    if args.label_col in train_df.columns:
-        plot_label_distribution(train_df[args.label_col], 'Training Label Distribution')
-    
-    print("\n=== Training model ===")
-    # Initialize model
-    model = BaseModel(
-        model_name=args.model_name,
-        num_labels=args.num_labels
-    )
-    
-    # Prepare data for training
-    train_loader, val_loader = model.prepare_data(
-        train_df, 
-        val_df,
-        text_col=args.text_col,
-        label_col=args.label_col,
-        batch_size=args.batch_size
-    )
-    
-    # Train model
-    history = model.train(
-        train_loader,
-        val_loader,
-        epochs=args.epochs,
-        learning_rate=args.learning_rate,
-        output_dir=args.output_dir
-    )
-    
-    # Plot training history
-    plot_training_history(history)
-    
-    print("\n=== Evaluating model ===")
-    # Load best model
-    model.load_model(os.path.join(args.output_dir, 'best_model'))
-    
-    # Evaluate on test data
-    test_loader, _ = model.prepare_data(
-        test_df,
-        text_col=args.text_col,
-        label_col=args.label_col,
-        batch_size=args.batch_size
-    )
-    
-    test_loss, test_acc = model.evaluate(test_loader)
-    print(f"Test Loss: {test_loss:.4f}")
-    print(f"Test Accuracy: {test_acc:.4f}")
-    
-    # Get predictions for test data
-    test_texts = test_df[args.text_col].tolist()
-    test_preds = model.predict(test_texts)
-    test_labels = test_df[args.label_col].tolist()
-    
-    # Plot confusion matrix and classification report
-    class_names = [str(i) for i in range(args.num_labels)]
-    plot_confusion_matrix(test_labels, test_preds, class_names)
-    plot_classification_report(test_labels, test_preds, class_names)
+    # Print summary
+    print("\n=== Training Summary ===")
+    for criterion, model_path in models.items():
+        print(f"{criterion.title()} model: {model_path}")
     
     print("\n=== Done! ===")
-    print(f"Model saved to {os.path.join(args.output_dir, 'best_model')}")
 
 if __name__ == "__main__":
     main() 

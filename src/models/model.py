@@ -1,1 +1,269 @@
- 
+import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import pandas as pd
+import numpy as np
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
+
+class TextDataset(Dataset):
+    """Custom dataset for text classification tasks."""
+    
+    def __init__(self, texts, labels, tokenizer, max_length=512):
+        """
+        Initialize dataset.
+        
+        Args:
+            texts: List of text inputs
+            labels: List of corresponding labels
+            tokenizer: Tokenizer to use for encoding
+            max_length: Maximum sequence length
+        """
+        self.texts = texts
+        self.labels = labels
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        
+    def __len__(self):
+        return len(self.texts)
+    
+    def __getitem__(self, idx):
+        text = self.texts[idx]
+        label = self.labels[idx]
+        
+        encoding = self.tokenizer(
+            text,
+            truncation=True,
+            padding='max_length',
+            max_length=self.max_length,
+            return_tensors='pt'
+        )
+        
+        return {
+            'input_ids': encoding['input_ids'].flatten(),
+            'attention_mask': encoding['attention_mask'].flatten(),
+            'labels': torch.tensor(label, dtype=torch.long)
+        }
+
+class BaseModel:
+    """Base class for supervised fine-tuning models."""
+    
+    def __init__(self, model_name="bert-base-uncased", num_labels=2, device=None):
+        """
+        Initialize model with pre-trained weights.
+        
+        Args:
+            model_name: Pre-trained model name or path
+            num_labels: Number of target labels
+            device: Device to use (cuda/cpu)
+        """
+        self.model_name = model_name
+        self.num_labels = num_labels
+        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            model_name, 
+            num_labels=num_labels
+        )
+        self.model.to(self.device)
+        
+    def prepare_data(self, train_df, val_df=None, text_col='text', label_col='label', batch_size=8, max_length=512):
+        """
+        Prepare data for training.
+        
+        Args:
+            train_df: Training DataFrame
+            val_df: Validation DataFrame (optional)
+            text_col: Column name for text inputs
+            label_col: Column name for labels
+            batch_size: Batch size for DataLoader
+            max_length: Maximum sequence length for tokenization
+            
+        Returns:
+            DataLoader for training (and validation if provided)
+        """
+        # Prepare training data
+        train_texts = train_df[text_col].tolist()
+        train_labels = train_df[label_col].tolist()
+        train_dataset = TextDataset(train_texts, train_labels, self.tokenizer, max_length=max_length)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        
+        # Prepare validation data if provided
+        val_loader = None
+        if val_df is not None:
+            val_texts = val_df[text_col].tolist()
+            val_labels = val_df[label_col].tolist()
+            val_dataset = TextDataset(val_texts, val_labels, self.tokenizer, max_length=max_length)
+            val_loader = DataLoader(val_dataset, batch_size=batch_size)
+            
+        return train_loader, val_loader
+    
+    def train(self, train_loader, val_loader=None, epochs=5, learning_rate=2e-5, weight_decay=0.01, output_dir="./outputs"):
+        """
+        Train the model.
+        
+        Args:
+            train_loader: DataLoader for training data
+            val_loader: DataLoader for validation data (optional)
+            epochs: Number of training epochs
+            learning_rate: Learning rate for optimizer
+            weight_decay: Weight decay for regularization
+            output_dir: Directory to save model checkpoints
+            
+        Returns:
+            Dictionary of training metrics
+        """
+        # Define optimizer and scheduler
+        optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        total_steps = len(train_loader) * epochs
+        
+        # Training loop
+        history = {'train_loss': [], 'val_loss': [], 'val_acc': []}
+        best_val_loss = float('inf')
+        
+        for epoch in range(epochs):
+            # Training phase
+            self.model.train()
+            train_loss = 0
+            
+            for batch in train_loader:
+                # Move batch to device
+                input_ids = batch['input_ids'].to(self.device)
+                attention_mask = batch['attention_mask'].to(self.device)
+                labels = batch['labels'].to(self.device)
+                
+                # Forward pass
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                loss = outputs.loss
+                
+                # Backward pass
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                train_loss += loss.item()
+            
+            avg_train_loss = train_loss / len(train_loader)
+            history['train_loss'].append(avg_train_loss)
+            
+            # Validation phase
+            if val_loader is not None:
+                val_loss, val_acc = self.evaluate(val_loader)
+                history['val_loss'].append(val_loss)
+                history['val_acc'].append(val_acc)
+                
+                # Save best model
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    # Create output directory if it doesn't exist
+                    if not os.path.exists(output_dir):
+                        os.makedirs(output_dir)
+                    # Save the model
+                    self.model.save_pretrained(f"{output_dir}/best_model")
+                    self.tokenizer.save_pretrained(f"{output_dir}/best_model")
+                
+                print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {val_loss:.4f} - Val Acc: {val_acc:.4f}")
+            else:
+                print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.4f}")
+        
+        return history
+    
+    def evaluate(self, val_loader):
+        """
+        Evaluate the model on validation data.
+        
+        Args:
+            val_loader: DataLoader for validation data
+            
+        Returns:
+            Tuple of (validation loss, accuracy)
+        """
+        self.model.eval()
+        val_loss = 0
+        all_preds = []
+        all_labels = []
+        
+        with torch.no_grad():
+            for batch in val_loader:
+                input_ids = batch['input_ids'].to(self.device)
+                attention_mask = batch['attention_mask'].to(self.device)
+                labels = batch['labels'].to(self.device)
+                
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                loss = outputs.loss
+                logits = outputs.logits
+                
+                val_loss += loss.item()
+                
+                # Convert logits to predictions
+                preds = torch.argmax(logits, dim=1).cpu().numpy()
+                labels = labels.cpu().numpy()
+                
+                all_preds.extend(preds)
+                all_labels.extend(labels)
+        
+        # Calculate metrics
+        avg_val_loss = val_loss / len(val_loader)
+        accuracy = accuracy_score(all_labels, all_preds)
+        
+        return avg_val_loss, accuracy
+    
+    def predict(self, texts, max_length=512, batch_size=8):
+        """
+        Make predictions on new texts.
+        
+        Args:
+            texts: List of texts to predict
+            max_length: Maximum sequence length for tokenization
+            batch_size: Batch size for DataLoader
+            
+        Returns:
+            Numpy array of predictions
+        """
+        self.model.eval()
+        dataset = TextDataset(texts, [0] * len(texts), self.tokenizer, max_length=max_length)  # Dummy labels
+        loader = DataLoader(dataset, batch_size=batch_size)
+        
+        all_preds = []
+        
+        with torch.no_grad():
+            for batch in loader:
+                input_ids = batch['input_ids'].to(self.device)
+                attention_mask = batch['attention_mask'].to(self.device)
+                
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                logits = outputs.logits
+                
+                preds = torch.argmax(logits, dim=1).cpu().numpy()
+                all_preds.extend(preds)
+        
+        return np.array(all_preds)
+    
+    def save_model(self, output_dir):
+        """
+        Save model and tokenizer.
+        
+        Args:
+            output_dir: Directory to save model
+        """
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        self.model.save_pretrained(output_dir)
+        self.tokenizer.save_pretrained(output_dir)
+        print(f"Model saved to {output_dir}")
+    
+    def load_model(self, model_dir):
+        """
+        Load model and tokenizer from directory.
+        
+        Args:
+            model_dir: Directory containing saved model
+        """
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_dir)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
+        self.model.to(self.device)
+        print(f"Model loaded from {model_dir}") 
