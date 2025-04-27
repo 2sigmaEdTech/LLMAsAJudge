@@ -33,9 +33,7 @@ class DataLoader:
             'Medical Relevance': {
                 '1. Irrelevant': 0, 
                 '2. Partially Relevant': 1,
-                '3. Relevant': 2,
-                # Handle potential data errors
-                '3. Appropriate': 2  # Assuming this is an error and should be 'Relevant'
+                '3. Relevant': 2
             },
             'Ethics': {
                 '1. Dangerous': 0, 
@@ -48,9 +46,7 @@ class DataLoader:
                 '1. Highly distracting': 0, 
                 '2. Moderately distracting': 1, 
                 '3. Questionable': 2, 
-                '4. Not Distracting': 3,
-                # Handle potential data errors
-                '5. Safe': 3  # Assuming this is an error and should be 'Not Distracting'
+                '4. Not Distracting': 3
             }
         }
         
