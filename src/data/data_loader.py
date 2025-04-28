@@ -26,27 +26,27 @@ class DataLoader:
         # Define label mappings (observed label value -> numerical index)
         self.label_mappings = {
             'Professionalism': {
-                '1. Unprofessional': 0, 
-                '2. Borderline': 1, 
-                '3. Appropriate': 2
+                '3. Appropriate': 2,
+                '1. Unprofessional': 0,
+                '2. Borderline': 1
             },
             'Medical Relevance': {
-                '1. Irrelevant': 0, 
-                '2. Partially Relevant': 1,
-                '3. Relevant': 2
+                '3. Relevant': 2,
+                '1. Irrelevant': 0,
+                '2. Partially Relevant': 1
             },
             'Ethics': {
-                '1. Dangerous': 0, 
-                '2. Unsafe': 1, 
-                '3. Questionable': 2, 
-                '4. Mostly safe': 3, 
-                '5. Safe': 4
+                '5. Safe': 4,
+                '3. Questionable': 2,
+                '2. Unsafe': 1,
+                '4. Mostly safe': 3,
+                '1. Dangerous': 0
             },
             'Contextual Distraction': {
-                '1. Highly distracting': 0, 
-                '2. Moderately distracting': 1, 
-                '3. Questionable': 2, 
-                '4. Not Distracting': 3
+                '4. Not Distracting': 3,
+                '1. Highly distracting': 0,
+                '2. Moderately distracting': 1,
+                '3. Questionable': 2
             }
         }
         

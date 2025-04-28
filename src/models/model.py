@@ -7,6 +7,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import pandas as pd
 import numpy as np
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
+from sklearn.utils.class_weight import compute_class_weight
 
 class TextDataset(Dataset):
     """Custom dataset for text classification tasks."""
@@ -64,10 +65,22 @@ class BaseModel:
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # Fix: Set pad token if missing BEFORE loading the model
+        pad_token_added = False
+        if self.tokenizer.pad_token is None:
+            if self.tokenizer.eos_token is not None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            else:
+                self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+                pad_token_added = True
+
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name, 
-            num_labels=num_labels
+            num_labels=num_labels,
+            pad_token_id=self.tokenizer.pad_token_id
         )
+        if pad_token_added:
+            self.model.resize_token_embeddings(len(self.tokenizer))
         self.model.to(self.device)
         
     def prepare_data(self, train_df, val_df=None, text_col='text', label_col='label', batch_size=8, max_length=512):
@@ -101,7 +114,7 @@ class BaseModel:
             
         return train_loader, val_loader
     
-    def train(self, train_loader, val_loader=None, epochs=5, learning_rate=2e-5, weight_decay=0.01, output_dir="./outputs"):
+    def train(self, train_loader, val_loader=None, epochs=5, learning_rate=2e-5, weight_decay=0.01, output_dir="./outputs", class_weights=None):
         """
         Train the model.
         
@@ -112,34 +125,41 @@ class BaseModel:
             learning_rate: Learning rate for optimizer
             weight_decay: Weight decay for regularization
             output_dir: Directory to save model checkpoints
-            
+            class_weights: Optional tensor of class weights for imbalanced data
+        
         Returns:
             Dictionary of training metrics
         """
-        # Define optimizer and scheduler
         optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         total_steps = len(train_loader) * epochs
+
+        # If class_weights not provided, compute from training data
+        if class_weights is None:
+            all_labels = []
+            for batch in train_loader:
+                all_labels.extend(batch['labels'].cpu().numpy())
+            class_weights_np = compute_class_weight('balanced', classes=np.arange(self.num_labels), y=all_labels)
+            class_weights = torch.tensor(class_weights_np, dtype=torch.float).to(self.device)
         
-        # Training loop
+        # Set up loss function with class weights
+        loss_fn = nn.CrossEntropyLoss(weight=class_weights)
+
         history = {'train_loss': [], 'val_loss': [], 'val_acc': []}
         best_val_loss = float('inf')
         
         for epoch in range(epochs):
-            # Training phase
             self.model.train()
             train_loss = 0
             
             for batch in train_loader:
-                # Move batch to device
                 input_ids = batch['input_ids'].to(self.device)
                 attention_mask = batch['attention_mask'].to(self.device)
                 labels = batch['labels'].to(self.device)
                 
-                # Forward pass
-                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                loss = outputs.loss
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                logits = outputs.logits
+                loss = loss_fn(logits, labels)
                 
-                # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -149,19 +169,15 @@ class BaseModel:
             avg_train_loss = train_loss / len(train_loader)
             history['train_loss'].append(avg_train_loss)
             
-            # Validation phase
             if val_loader is not None:
                 val_loss, val_acc = self.evaluate(val_loader)
                 history['val_loss'].append(val_loss)
                 history['val_acc'].append(val_acc)
                 
-                # Save best model
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    # Create output directory if it doesn't exist
                     if not os.path.exists(output_dir):
                         os.makedirs(output_dir)
-                    # Save the model
                     self.model.save_pretrained(f"{output_dir}/best_model")
                     self.tokenizer.save_pretrained(f"{output_dir}/best_model")
                 
