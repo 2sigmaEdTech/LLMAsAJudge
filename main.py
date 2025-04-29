@@ -84,13 +84,25 @@ def train_criterion_model(criterion, data_loader, args):
     
     # Step 6: Prepare data for training
     text_col = data_loader.get_text_column()
+    if criterion == 'professionalism':
+        prompt_template = "Judge the professionalism of this message: '{user_message}'. Answer with Unprofessional, Borderline, or Appropriate."
+    elif criterion == 'relevance':
+        prompt_template = "Is the following message relevant to the medical context? '{user_message}'"
+    elif criterion == 'ethics':
+        prompt_template = "Evaluate the ethical implications of this message: '{user_message}'"
+    elif criterion == 'distraction':
+        prompt_template = "Evaluate the distraction level of this message: '{user_message}'"
+    else:
+        prompt_template = None
+    
     train_loader, val_loader = model.prepare_data(
         train_df, 
         val_df,
         text_col=text_col,
         label_col=label_col,
         batch_size=args.batch_size,
-        max_length=args.max_length
+        max_length=args.max_length,
+        prompt_template=prompt_template
     )
     
     # Step 7: Train model

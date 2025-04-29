@@ -7,3 +7,4 @@ seaborn
 openpyxl
 hf_xet
 tiktoken
+protobuf

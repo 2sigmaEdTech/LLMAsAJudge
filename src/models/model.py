@@ -12,7 +12,7 @@ from sklearn.utils.class_weight import compute_class_weight
 class TextDataset(Dataset):
     """Custom dataset for text classification tasks."""
     
-    def __init__(self, texts, labels, tokenizer, max_length=512):
+    def __init__(self, texts, labels, tokenizer, max_length=512, prompt_template=None):
         """
         Initialize dataset.
         
@@ -21,11 +21,13 @@ class TextDataset(Dataset):
             labels: List of corresponding labels
             tokenizer: Tokenizer to use for encoding
             max_length: Maximum sequence length
+            prompt_template: Optional string template for prompt engineering
         """
         self.texts = texts
         self.labels = labels
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.prompt_template = prompt_template
         
     def __len__(self):
         return len(self.texts)
@@ -33,6 +35,10 @@ class TextDataset(Dataset):
     def __getitem__(self, idx):
         text = self.texts[idx]
         label = self.labels[idx]
+        
+        # Apply prompt engineering if a template is provided
+        if self.prompt_template:
+            text = self.prompt_template.format(user_message=text)
         
         encoding = self.tokenizer(
             text,
@@ -83,7 +89,7 @@ class BaseModel:
             self.model.resize_token_embeddings(len(self.tokenizer))
         self.model.to(self.device)
         
-    def prepare_data(self, train_df, val_df=None, text_col='text', label_col='label', batch_size=8, max_length=512):
+    def prepare_data(self, train_df, val_df=None, text_col='text', label_col='label', batch_size=8, max_length=512, prompt_template=None):
         """
         Prepare data for training.
         
@@ -94,14 +100,15 @@ class BaseModel:
             label_col: Column name for labels
             batch_size: Batch size for DataLoader
             max_length: Maximum sequence length for tokenization
-            
+            prompt_template: Optional string template for prompt engineering
+        
         Returns:
             DataLoader for training (and validation if provided)
         """
         # Prepare training data
         train_texts = train_df[text_col].tolist()
         train_labels = train_df[label_col].tolist()
-        train_dataset = TextDataset(train_texts, train_labels, self.tokenizer, max_length=max_length)
+        train_dataset = TextDataset(train_texts, train_labels, self.tokenizer, max_length=max_length, prompt_template=prompt_template)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         
         # Prepare validation data if provided
@@ -109,7 +116,7 @@ class BaseModel:
         if val_df is not None:
             val_texts = val_df[text_col].tolist()
             val_labels = val_df[label_col].tolist()
-            val_dataset = TextDataset(val_texts, val_labels, self.tokenizer, max_length=max_length)
+            val_dataset = TextDataset(val_texts, val_labels, self.tokenizer, max_length=max_length, prompt_template=prompt_template)
             val_loader = DataLoader(val_dataset, batch_size=batch_size)
             
         return train_loader, val_loader
