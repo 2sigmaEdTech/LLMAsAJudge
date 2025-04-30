@@ -2,6 +2,8 @@ import os
 import argparse
 import pandas as pd
 from pathlib import Path
+import numpy as np
+from sklearn.metrics import cohen_kappa_score, accuracy_score, f1_score
 
 from src.data.data_loader import DataLoader
 from src.models.model import BaseModel
@@ -159,6 +161,16 @@ def train_criterion_model(criterion, data_loader, args):
         
     plot_confusion_matrix(test_labels, test_preds, class_names)
     plot_classification_report(test_labels, test_preds, class_names)
+    
+    # Compute and print Cohen's Kappa, mean confidence, accuracy, and weighted F1
+    kappa = cohen_kappa_score(test_labels, test_preds)
+    mean_conf = float(np.mean(test_confidences))
+    acc = accuracy_score(test_labels, test_preds)
+    weighted_f1 = f1_score(test_labels, test_preds, average='weighted')
+    print(f"Cohen's Kappa: {kappa:.4f}")
+    print(f"Mean confidence: {mean_conf:.4f}")
+    print(f"Accuracy (recomputed): {acc:.4f}")
+    print(f"Weighted F1 score: {weighted_f1:.4f}")
     
     print(f"\n=== {criterion.title()} model saved to {best_model_dir} ===")
     return best_model_dir
