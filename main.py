@@ -158,6 +158,58 @@ def train_criterion_model(criterion, data_loader, args):
     print(f"\n=== {criterion.title()} model saved to {best_model_dir} ===")
     return best_model_dir
 
+def further_finetune_with_prompt(criterion, data_loader, args, prev_model_dir):
+    """
+    Further fine-tune a previously trained model using prompt engineering.
+    """
+    print(f"\n=== Further Fine-Tuning {criterion.title()} with Prompt Engineering ===")
+    
+    # Load processed data
+    criterion_processed_dir = os.path.join(args.processed_dir, criterion)
+    train_df = pd.read_csv(os.path.join(criterion_processed_dir, f"{criterion}_train.csv"))
+    val_df = pd.read_csv(os.path.join(criterion_processed_dir, f"{criterion}_val.csv"))
+    
+    # Initialize and load previous model
+    num_classes = data_loader.get_num_classes(criterion)
+    model = BaseModel(model_name=prev_model_dir, num_labels=num_classes)
+    model.load_model(prev_model_dir)
+    
+    # Define prompt template
+    if criterion == 'professionalism':
+        prompt_template = "Judge the professionalism of this message: '{user_message}'. Answer with Unprofessional, Borderline, or Appropriate."
+    elif criterion == 'relevance':
+        prompt_template = "Is the following message relevant to the medical context? '{user_message}'"
+    elif criterion == 'ethics':
+        prompt_template = "Evaluate the ethical implications of this message: '{user_message}'"
+    elif criterion == 'distraction':
+        prompt_template = "Evaluate the distraction level of this message: '{user_message}'"
+    else:
+        prompt_template = None
+
+    text_col = data_loader.get_text_column()
+    label_col = data_loader.get_label_column(criterion)
+    
+    # Prepare data with prompt engineering
+    train_loader, val_loader = model.prepare_data(
+        train_df,
+        val_df,
+        text_col=text_col,
+        label_col=label_col,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
+        prompt_template=prompt_template
+    )
+    
+    # Continue training
+    model.train(
+        train_loader,
+        val_loader,
+        epochs=args.epochs,
+        learning_rate=args.learning_rate,
+        output_dir=os.path.join(args.output_dir, criterion)
+    )
+    print(f"=== Further fine-tuned {criterion.title()} model saved to {os.path.join(args.output_dir, criterion, 'best_model')} ===")
+
 def main():
     """Main function to run the full workflow."""
     # Parse arguments
@@ -203,6 +255,10 @@ def main():
     print("\n=== Training Summary ===")
     for criterion, model_path in models.items():
         print(f"{criterion.title()} model: {model_path}")
+    
+    # Further fine-tune with prompt engineering
+    for criterion, model_path in models.items():
+        further_finetune_with_prompt(criterion, data_loader, args, model_path)
     
     print("\n=== Done! ===")
 
