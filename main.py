@@ -137,8 +137,13 @@ def train_criterion_model(criterion, data_loader, args):
     
     # Step 10: Generate confusion matrix and classification report
     test_texts = test_df[text_col].tolist()
-    test_preds = model.predict(test_texts)
+    test_preds, test_confidences = model.predict(test_texts, return_confidence=True)
     test_labels = test_df[label_col].tolist()
+    
+    # Log the first 10 predictions and their confidences
+    print("Sample predictions and confidences:")
+    for i in range(min(10, len(test_preds))):
+        print(f"Text: {test_texts[i]} | Pred: {test_preds[i]} | Confidence: {test_confidences[i]:.4f}")
     
     # Use criterion-specific class names
     if criterion == 'professionalism':

@@ -234,7 +234,7 @@ class BaseModel:
         
         return avg_val_loss, accuracy
     
-    def predict(self, texts, max_length=512, batch_size=8):
+    def predict(self, texts, max_length=512, batch_size=8, return_confidence=True):
         """
         Make predictions on new texts.
         
@@ -242,15 +242,17 @@ class BaseModel:
             texts: List of texts to predict
             max_length: Maximum sequence length for tokenization
             batch_size: Batch size for DataLoader
-            
+            return_confidence: If True, also return confidence scores (max softmax probability)
+        
         Returns:
-            Numpy array of predictions
+            Numpy array of predictions (and confidences if requested)
         """
         self.model.eval()
         dataset = TextDataset(texts, [0] * len(texts), self.tokenizer, max_length=max_length)  # Dummy labels
         loader = DataLoader(dataset, batch_size=batch_size)
         
         all_preds = []
+        all_confidences = []
         
         with torch.no_grad():
             for batch in loader:
@@ -262,8 +264,16 @@ class BaseModel:
                 
                 preds = torch.argmax(logits, dim=1).cpu().numpy()
                 all_preds.extend(preds)
+                
+                if return_confidence:
+                    probs = torch.softmax(logits, dim=1)
+                    max_conf = torch.max(probs, dim=1).values.cpu().numpy()
+                    all_confidences.extend(max_conf)
         
-        return np.array(all_preds)
+        if return_confidence:
+            return np.array(all_preds), np.array(all_confidences)
+        else:
+            return np.array(all_preds)
     
     def save_model(self, output_dir):
         """
