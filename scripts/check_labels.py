@@ -2,10 +2,11 @@ import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import logging
 
 def check_labels():
     """Check the unique values in the label columns"""
-    print("==== Checking Label Values for Fuzzy Criteria ====")
+    logging.info("==== Checking Label Values for Fuzzy Criteria ====")
     
     # Set the path to the raw data directory
     raw_data_dir = Path('./data/raw')
@@ -13,27 +14,27 @@ def check_labels():
     # Get list of Excel files
     excel_files = list(raw_data_dir.glob('fuzzy.coding.data*.xlsx'))
     if not excel_files:
-        print("No Excel files found. Please check the path and filenames.")
+        logging.warning("No Excel files found. Please check the path and filenames.")
         return
     
     # Load and merge all files to get comprehensive label information
-    print(f"Loading {len(excel_files)} Excel files...")
+    logging.info(f"Loading {len(excel_files)} Excel files...")
     dfs = []
     for file in excel_files:
         try:
             df = pd.read_excel(file)
             dfs.append(df)
-            print(f"Loaded {file.name}: {df.shape[0]} rows")
+            logging.info(f"Loaded {file.name}: {df.shape[0]} rows")
         except Exception as e:
-            print(f"Error loading {file.name}: {e}")
+            logging.error(f"Error loading {file.name}: {e}")
     
     if not dfs:
-        print("Failed to load any data files.")
+        logging.warning("Failed to load any data files.")
         return
     
     # Combine all dataframes
     merged_df = pd.concat(dfs, ignore_index=True)
-    print(f"\nCombined dataset: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
+    logging.info(f"\nCombined dataset: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
     
     # Define label columns based on the exploration script's output
     label_columns = {
@@ -44,18 +45,18 @@ def check_labels():
     }
     
     # Check unique values in each label column
-    print("\n==== Unique Values in Label Columns ====")
+    logging.info("\n==== Unique Values in Label Columns ====")
     for criterion, column in label_columns.items():
         if column in merged_df.columns:
             unique_values = merged_df[column].dropna().unique()
             unique_values.sort() # Sort for clearer output
-            print(f"\n{criterion.title()} ({column}):")
+            logging.info(f"\n{criterion.title()} ({column}):")
             for val in unique_values:
                 count = merged_df[column].value_counts().get(val, 0)
                 percentage = 100 * count / merged_df[column].count()
-                print(f"  - '{val}': {count} occurrences ({percentage:.2f}%)")
+                logging.info(f"  - '{val}': {count} occurrences ({percentage:.2f}%)")
         else:
-            print(f"{criterion.title()}: Column '{column}' not found")
+            logging.warning(f"{criterion.title()}: Column '{column}' not found")
     
     # Define the expected mappings based on the project requirements
     expected_mappings = {
@@ -85,11 +86,11 @@ def check_labels():
     }
     
     # Suggested label mappings based on the observed values
-    print("\n==== Suggested Label Mappings ====")
+    logging.info("\n==== Suggested Label Mappings ====")
     for column, expected_map in expected_mappings.items():
         if column in merged_df.columns:
             unique_values = merged_df[column].dropna().unique()
-            print(f"\n{column} mapping:")
+            logging.info(f"\n{column} mapping:")
             # Try to match observed values with expected values
             # This is a heuristic approach and may need manual correction
             mapping = {}
@@ -108,12 +109,12 @@ def check_labels():
                     mapping[val] = mapped_to
                 else:
                     # If no match found, print a warning
-                    print(f"  WARNING: No mapping found for '{val}'")
+                    logging.warning(f"  WARNING: No mapping found for '{val}'")
             
             # Print the suggested mapping
-            print(f"  '{column}': {mapping}")
+            logging.info(f"  '{column}': {mapping}")
         else:
-            print(f"{column}: Column not found")
+            logging.warning(f"{column}: Column not found")
 
 if __name__ == "__main__":
     check_labels() 

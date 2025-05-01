@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
 from sklearn.utils.class_weight import compute_class_weight
+import logging
 
 class TextDataset(Dataset):
     """Custom dataset for text classification tasks."""
@@ -188,9 +189,9 @@ class BaseModel:
                     self.model.save_pretrained(f"{output_dir}/best_model")
                     self.tokenizer.save_pretrained(f"{output_dir}/best_model")
                 
-                print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {val_loss:.4f} - Val Acc: {val_acc:.4f}")
+                logging.info(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {val_loss:.4f} - Val Acc: {val_acc:.4f}")
             else:
-                print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.4f}")
+                logging.info(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.4f}")
         
         return history
     
@@ -287,7 +288,7 @@ class BaseModel:
         
         self.model.save_pretrained(output_dir)
         self.tokenizer.save_pretrained(output_dir)
-        print(f"Model saved to {output_dir}")
+        logging.info(f"Model saved to {output_dir}")
     
     def load_model(self, model_dir):
         """
@@ -299,4 +300,4 @@ class BaseModel:
         self.model = AutoModelForSequenceClassification.from_pretrained(model_dir)
         self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
         self.model.to(self.device)
-        print(f"Model loaded from {model_dir}") 
+        logging.info(f"Model loaded from {model_dir}") 

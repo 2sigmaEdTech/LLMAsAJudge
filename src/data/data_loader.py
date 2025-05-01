@@ -2,6 +2,8 @@ import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from collections import Counter
+import logging
 
 class DataLoader:
     def __init__(self, data_dir):
@@ -73,9 +75,9 @@ class DataLoader:
             try:
                 df = pd.read_excel(file_path)
                 data_dict[file_path.name] = df
-                print(f"Loaded {file_path.name}: {df.shape[0]} rows, {df.shape[1]} columns")
+                logging.info(f"Loaded {file_path.name}: {df.shape[0]} rows, {df.shape[1]} columns")
             except Exception as e:
-                print(f"Error loading {file_path.name}: {e}")
+                logging.warning(f"Error loading {file_path.name}: {e}")
         
         return data_dict
     
@@ -100,7 +102,7 @@ class DataLoader:
             self.raw_data = pd.concat(merged_data, ignore_index=True)
             return self.raw_data
         else:
-            print("No data to merge")
+            logging.warning("No data to merge")
             return None
     
     def preprocess_data(self, df=None, criterion=None):
@@ -165,7 +167,7 @@ class DataLoader:
             # Drop rows with unmapped labels (-1)
             unmapped_count = (df[numeric_col] == -1).sum()
             if unmapped_count > 0:
-                print(f"Warning: {unmapped_count} rows with unmapped labels in column '{col}' will be dropped")
+                logging.warning(f"Warning: {unmapped_count} rows with unmapped labels in column '{col}' will be dropped")
                 df = df[df[numeric_col] != -1]
         
         return df
@@ -216,9 +218,9 @@ class DataLoader:
         val_ratio = val_size / (1 - test_size)
         train_df, val_df = train_test_split(train_val_df, test_size=val_ratio, random_state=random_state, stratify=None)
         
-        print(f"Train set: {train_df.shape[0]} rows")
-        print(f"Validation set: {val_df.shape[0]} rows")
-        print(f"Test set: {test_df.shape[0]} rows")
+        logging.info(f"Train set: {train_df.shape[0]} rows")
+        logging.info(f"Validation set: {val_df.shape[0]} rows")
+        logging.info(f"Test set: {test_df.shape[0]} rows")
         
         return train_df, val_df, test_df
     
@@ -243,7 +245,7 @@ class DataLoader:
         val_df.to_csv(output_dir / f"{prefix}val.csv", index=False)
         test_df.to_csv(output_dir / f"{prefix}test.csv", index=False)
         
-        print(f"Saved processed data to {output_dir}")
+        logging.info(f"Saved processed data to {output_dir}")
     
     def get_text_column(self):
         """Get the name of the text column."""
@@ -259,4 +261,53 @@ class DataLoader:
         """Get the number of classes for a specific criterion."""
         if criterion not in self.num_classes:
             raise ValueError(f"Unknown criterion: {criterion}. Available: {list(self.num_classes.keys())}")
-        return self.num_classes[criterion] 
+        return self.num_classes[criterion]
+    
+    def merge_and_report_conflicts(self, data_dict, conflict_output_path='conflicts_output.xlsx'):
+        """
+        Merge multiple dataframes, picking the most frequent value for label columns when grouped by key columns.
+        Also, output rows where the label columns have conflicting values for the same group.
+        
+        Args:
+            data_dict: Dictionary of DataFrames
+            conflict_output_path: Path to save the conflicts Excel file
+        Returns:
+            merged_df: DataFrame with resolved values
+            conflicts_df: DataFrame with conflicts
+        """
+        merged_data = []
+        for file_name, df in data_dict.items():
+            df = df.copy()
+            df['source_file'] = file_name
+            merged_data.append(df)
+        if not merged_data:
+            logging.warning("No data to merge")
+            return None, None
+        df = pd.concat(merged_data, ignore_index=True)
+        # Group and aggregate by mode
+        def mode_or_first(x):
+            m = x.mode()
+            return m.iloc[0] if not m.empty else x.iloc[0]
+        agg_dict = {col: mode_or_first for col in self.label_columns.values()}
+        merged_df = df.groupby(['ConversationID', 'Case', 'JailbreakID', 'Conversation_Pair', 'User Message', 'Assistant Message'], as_index=False).agg(agg_dict)
+        # Find conflicts
+        def has_conflict(subdf):
+            conflicts = {}
+            for col in self.label_columns.values():
+                vals = subdf[col].dropna().unique()
+                if len(vals) > 1:
+                    conflicts[col] = list(vals)
+            return conflicts if conflicts else None
+        conflict_rows = []
+        for _, subdf in df.groupby(['ConversationID', 'Case', 'JailbreakID', 'Conversation_Pair', 'User Message', 'Assistant Message']):
+            conflicts = has_conflict(subdf)
+            if conflicts:
+                row = {col: subdf.iloc[0][col] for col in ['ConversationID', 'Case', 'JailbreakID', 'Conversation_Pair', 'User Message', 'Assistant Message']}
+                for col in self.label_columns.values():
+                    row[col] = list(subdf[col].dropna().unique())
+                conflict_rows.append(row)
+        conflicts_df = pd.DataFrame(conflict_rows)
+        if not conflicts_df.empty:
+            conflicts_df.to_excel(conflict_output_path, index=False)
+            logging.info(f"Conflicts saved to {conflict_output_path}")
+        return merged_df, conflicts_df 

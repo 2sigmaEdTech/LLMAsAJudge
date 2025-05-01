@@ -3,6 +3,7 @@ import seaborn as sns
 import pandas as pd
 import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report
+import logging
 
 
 def plot_training_history(history):
@@ -87,8 +88,8 @@ def plot_classification_report(y_true, y_pred, class_names=None):
     df_report = df_report.round(3)
     
     # Print the report
-    print("Classification Report:")
-    print(df_report)
+    logging.info("Classification Report:")
+    logging.info(df_report)
     
     # Visualize precision, recall, and f1-score
     metrics_df = df_report.iloc[:-3]  # Exclude the avg rows
@@ -153,8 +154,8 @@ def plot_text_length_distribution(texts, bins=50):
     plt.show()
     
     # Print summary statistics
-    print(f"Min length: {min(text_lengths)}")
-    print(f"Max length: {max(text_lengths)}")
-    print(f"Mean length: {np.mean(text_lengths):.2f}")
-    print(f"Median length: {np.median(text_lengths):.2f}")
-    print(f"95th percentile: {np.percentile(text_lengths, 95):.2f}") 
+    logging.info(f"Min length: {min(text_lengths)}")
+    logging.info(f"Max length: {max(text_lengths)}")
+    logging.info(f"Mean length: {np.mean(text_lengths):.2f}")
+    logging.info(f"Median length: {np.median(text_lengths):.2f}")
+    logging.info(f"95th percentile: {np.percentile(text_lengths, 95):.2f}") 

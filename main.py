@@ -4,6 +4,7 @@ import pandas as pd
 from pathlib import Path
 import numpy as np
 from sklearn.metrics import cohen_kappa_score, accuracy_score, f1_score
+import logging
 
 from src.data.data_loader import DataLoader
 from src.models.model import BaseModel
@@ -36,7 +37,7 @@ def parse_args():
     
     return parser.parse_args()
 
-def train_criterion_model(criterion, data_loader, args):
+def train_criterion_model(criterion, data_loader, args, merged_data=None):
     """
     Train a model for a specific fuzzy criterion.
     
@@ -44,11 +45,11 @@ def train_criterion_model(criterion, data_loader, args):
         criterion: The criterion to train for ('professionalism', 'relevance', 'ethics', 'distraction')
         data_loader: DataLoader instance
         args: Command line arguments
-        
+        merged_data: DataFrame to use for processing (if provided)
     Returns:
         Path to the saved model
     """
-    print(f"\n=== Processing {criterion.title()} Criterion ===")
+    logging.info(f"\n=== Processing {criterion.title()} Criterion ===")
     
     # Create criterion-specific output directories
     criterion_processed_dir = os.path.join(args.processed_dir, criterion)
@@ -58,15 +59,15 @@ def train_criterion_model(criterion, data_loader, args):
     
     # Get the appropriate number of classes for this criterion
     num_classes = data_loader.get_num_classes(criterion)
-    print(f"Number of classes for {criterion}: {num_classes}")
+    logging.info(f"Number of classes for {criterion}: {num_classes}")
     
     # Step 1: Preprocess the data for this criterion
-    print(f"Preprocessing data for {criterion}...")
-    processed_data = data_loader.preprocess_data(criterion=criterion)
-    print(f"Processed data shape: {processed_data.shape}")
+    logging.info(f"Preprocessing data for {criterion}...")
+    processed_data = data_loader.preprocess_data(df=merged_data, criterion=criterion)
+    logging.info(f"Processed data shape: {processed_data.shape}")
     
     # Step 2: Split the data
-    print(f"Splitting data for {criterion}...")
+    logging.info(f"Splitting data for {criterion}...")
     train_df, val_df, test_df = data_loader.split_data(processed_data, criterion=criterion)
     
     # Step 3: Save processed data
@@ -78,7 +79,7 @@ def train_criterion_model(criterion, data_loader, args):
         plot_label_distribution(train_df[label_col], f'{criterion.title()} Training Distribution')
     
     # Step 5: Initialize model
-    print(f"\n=== Training model for {criterion.title()} ===")
+    logging.info(f"\n=== Training model for {criterion.title()} ===")
     model = BaseModel(
         model_name=args.model_name,
         num_labels=num_classes
@@ -120,7 +121,7 @@ def train_criterion_model(criterion, data_loader, args):
     plot_training_history(history)
     
     # Step 9: Evaluate on test data
-    print(f"\n=== Evaluating {criterion.title()} model ===")
+    logging.info(f"\n=== Evaluating {criterion.title()} model ===")
     best_model_dir = os.path.join(criterion_output_dir, 'best_model')
     if os.path.exists(best_model_dir):
         model.load_model(best_model_dir)
@@ -134,8 +135,8 @@ def train_criterion_model(criterion, data_loader, args):
     )
     
     test_loss, test_acc = model.evaluate(test_loader)
-    print(f"{criterion.title()} Test Loss: {test_loss:.4f}")
-    print(f"{criterion.title()} Test Accuracy: {test_acc:.4f}")
+    logging.info(f"{criterion.title()} Test Loss: {test_loss:.4f}")
+    logging.info(f"{criterion.title()} Test Accuracy: {test_acc:.4f}")
     
     # Step 10: Generate confusion matrix and classification report
     test_texts = test_df[text_col].tolist()
@@ -143,9 +144,9 @@ def train_criterion_model(criterion, data_loader, args):
     test_labels = test_df[label_col].tolist()
     
     # Log the first 10 predictions and their confidences
-    print("Sample predictions and confidences:")
+    logging.info("Sample predictions and confidences:")
     for i in range(min(10, len(test_preds))):
-        print(f"Text: {test_texts[i]} | Pred: {test_preds[i]} | Confidence: {test_confidences[i]:.4f}")
+        logging.info(f"Text: {test_texts[i]} | Pred: {test_preds[i]} | Confidence: {test_confidences[i]:.4f}")
     
     # Use criterion-specific class names
     if criterion == 'professionalism':
@@ -167,19 +168,19 @@ def train_criterion_model(criterion, data_loader, args):
     mean_conf = float(np.mean(test_confidences))
     acc = accuracy_score(test_labels, test_preds)
     weighted_f1 = f1_score(test_labels, test_preds, average='weighted')
-    print(f"Cohen's Kappa: {kappa:.4f}")
-    print(f"Mean confidence: {mean_conf:.4f}")
-    print(f"Accuracy (recomputed): {acc:.4f}")
-    print(f"Weighted F1 score: {weighted_f1:.4f}")
+    logging.info(f"Cohen's Kappa: {kappa:.4f}")
+    logging.info(f"Mean confidence: {mean_conf:.4f}")
+    logging.info(f"Accuracy (recomputed): {acc:.4f}")
+    logging.info(f"Weighted F1 score: {weighted_f1:.4f}")
     
-    print(f"\n=== {criterion.title()} model saved to {best_model_dir} ===")
+    logging.info(f"\n=== {criterion.title()} model saved to {best_model_dir} ===")
     return best_model_dir
 
 def further_finetune_with_prompt(criterion, data_loader, args, prev_model_dir):
     """
     Further fine-tune a previously trained model using prompt engineering.
     """
-    print(f"\n=== Further Fine-Tuning {criterion.title()} with Prompt Engineering ===")
+    logging.info(f"\n=== Further Fine-Tuning {criterion.title()} with Prompt Engineering ===")
     
     # Load processed data
     criterion_processed_dir = os.path.join(args.processed_dir, criterion)
@@ -225,7 +226,7 @@ def further_finetune_with_prompt(criterion, data_loader, args, prev_model_dir):
         learning_rate=args.learning_rate,
         output_dir=os.path.join(args.output_dir, criterion)
     )
-    print(f"=== Further fine-tuned {criterion.title()} model saved to {os.path.join(args.output_dir, criterion, 'best_model')} ===")
+    logging.info(f"=== Further fine-tuned {criterion.title()} model saved to {os.path.join(args.output_dir, criterion, 'best_model')} ===")
 
 def main():
     """Main function to run the full workflow."""
@@ -236,21 +237,32 @@ def main():
     os.makedirs(args.processed_dir, exist_ok=True)
     os.makedirs(args.output_dir, exist_ok=True)
     
-    print("=== Loading data ===")
+    logging.info("=== Loading data ===")
     # Initialize data loader
     data_loader = DataLoader(args.data_dir)
     
     # Load Excel files
     data_dict = data_loader.load_excel_files(pattern="fuzzy.coding.data*.xlsx")
     
-    # Merge dataframes
-    merged_data = data_loader.merge_dataframes(data_dict)
-    
+    # Merge and report conflicts first
+    merged_data, conflicts_df = data_loader.merge_and_report_conflicts(data_dict, conflict_output_path='conflicts_output.xlsx')
     if merged_data is None or merged_data.empty:
-        print("No data available. Exiting.")
+        logging.info("No data available after merging. Exiting.")
         return
+    if conflicts_df is not None and not conflicts_df.empty:
+        logging.info(f"Conflicting rows found and saved to 'conflicts_output.xlsx'.")
+    else:
+        logging.info("No conflicts found in the merged data.")
     
-    print(f"Merged data shape: {merged_data.shape}")
+    # Save merged data to a new file
+    merged_data_file = 'merged_data.xlsx'
+    merged_data.to_excel(merged_data_file, index=False)
+    logging.info(f"Merged data saved to {merged_data_file}")
+
+    # Read the merged data back in
+    merged_data = pd.read_excel(merged_data_file)
+
+    logging.info(f"Merged data shape: {merged_data.shape}")
     
     # Define the criteria to process
     criteria = ['professionalism', 'relevance', 'ethics', 'distraction']
@@ -258,26 +270,41 @@ def main():
     # If a specific criterion is specified, only process that one
     if args.criterion:
         if args.criterion not in criteria:
-            print(f"Error: Unknown criterion '{args.criterion}'. Available: {criteria}")
+            logging.error(f"Error: Unknown criterion '{args.criterion}'. Available: {criteria}")
             return
         criteria = [args.criterion]
     
     # Train a model for each criterion
     models = {}
     for criterion in criteria:
-        model_path = train_criterion_model(criterion, data_loader, args)
+        model_path = train_criterion_model(criterion, data_loader, args, merged_data=merged_data)
         models[criterion] = model_path
     
     # Print summary
-    print("\n=== Training Summary ===")
+    logging.info("\n=== Training Summary ===")
     for criterion, model_path in models.items():
-        print(f"{criterion.title()} model: {model_path}")
+        logging.info(f"{criterion.title()} model: {model_path}")
     
     # Further fine-tune with prompt engineering
     for criterion, model_path in models.items():
         further_finetune_with_prompt(criterion, data_loader, args, model_path)
     
-    print("\n=== Done! ===")
+    logging.info("\n=== Done! ===")
 
 if __name__ == "__main__":
+    # Set up logging to both file and console
+    log_formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    # File handler
+    file_handler = logging.FileHandler('llm_fuzzy_judge.log', mode='a')
+    file_handler.setFormatter(log_formatter)
+    root_logger.addHandler(file_handler)
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(log_formatter)
+    root_logger.addHandler(console_handler)
+
     main() 
