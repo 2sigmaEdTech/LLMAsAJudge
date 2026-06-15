@@ -94,3 +94,6 @@ Thumbs.db
 # Specific to transformers
 **/runs/
 wandb/ 
+
+# Models
+models/

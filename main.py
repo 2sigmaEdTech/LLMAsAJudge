@@ -19,6 +19,59 @@ from src.utils.visualization import (
     plot_classification_report, plot_label_distribution
 )
 
+
+def ensure_local_model(model_name, models_dir="models"):
+    """
+    Ensure a local copy of `model_name` exists under `models_dir`.
+    If a local copy is present, return its path. Otherwise download the
+    tokenizer and model from Hugging Face and save them under
+    `models_dir/<sanitized_model_name>` and return that path.
+
+    Falls back to returning the original `model_name` string on failure.
+    """
+    import logging
+    try:
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel
+    except Exception as e:
+        logging.warning(f"transformers import failed: {e}")
+        return model_name
+
+    safe_name = model_name.replace("/", "_")
+    target_dir = os.path.join(models_dir, safe_name)
+
+    # If already present and looks like a HF repo (has config.json), use it
+    if os.path.isdir(target_dir) and os.path.exists(os.path.join(target_dir, "config.json")):
+        logging.info(f"Using existing local model at {target_dir}")
+        return target_dir
+
+    # Try to download and save to the target directory
+    os.makedirs(target_dir, exist_ok=True)
+    try:
+        logging.info(f"Downloading tokenizer for {model_name} to {target_dir}...")
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer.save_pretrained(target_dir)
+
+        logging.info(f"Downloading model weights for {model_name} (this may be large)...")
+        try:
+            model = AutoModelForSequenceClassification.from_pretrained(model_name)
+            model.save_pretrained(target_dir)
+        except Exception:
+            # Fallback to downloading a generic AutoModel if SequenceClassification isn't available
+            model = AutoModel.from_pretrained(model_name)
+            model.save_pretrained(target_dir)
+
+        logging.info(f"Saved model {model_name} to {target_dir}")
+        return target_dir
+    except Exception as e:
+        logging.error(f"Failed to download/save model {model_name}: {e}")
+        # Cleanup target_dir if empty
+        try:
+            if os.path.isdir(target_dir) and not os.listdir(target_dir):
+                os.rmdir(target_dir)
+        except Exception:
+            pass
+        return model_name
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='LLM-as-a-Fuzzy-Judge: Fine-tuning for clinical evaluation')
@@ -86,8 +139,10 @@ def train_criterion_model(criterion, data_loader, args, merged_data=None):
     
     # Step 5: Initialize model
     logging.info(f"\n=== Training model for {criterion.title()} ===")
+    # Prefer a local copy under `models/` (download if missing)
+    local_model_ref = ensure_local_model(args.model_name, models_dir='models')
     model = BaseModel(
-        model_name=args.model_name,
+        model_name=local_model_ref,
         num_labels=num_classes
     )
     
