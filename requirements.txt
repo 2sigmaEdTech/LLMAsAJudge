@@ -8,3 +8,4 @@ openpyxl
 hf_xet
 tiktoken
 protobuf
+krippendorff

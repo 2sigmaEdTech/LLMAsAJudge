@@ -4,7 +4,13 @@ import pandas as pd
 from pathlib import Path
 import numpy as np
 from sklearn.metrics import cohen_kappa_score, accuracy_score, f1_score
+from itertools import combinations
 import logging
+
+try:
+    import krippendorff
+except ImportError:
+    krippendorff = None
 
 from src.data.data_loader import DataLoader
 from src.models.model import BaseModel
@@ -228,6 +234,216 @@ def further_finetune_with_prompt(criterion, data_loader, args, prev_model_dir):
     )
     logging.info(f"=== Further fine-tuned {criterion.title()} model saved to {os.path.join(args.output_dir, criterion, 'best_model')} ===")
 
+def compute_inter_annotator_agreement(data_dict, data_loader):
+    """
+    Calculate inter-annotator agreement statistics for multi-judge annotation.
+    
+    Computes Krippendorff's α and Fleiss' κ for each criterion to assess
+    the reliability and consistency of annotations across judges.
+    
+    Args:
+        data_dict: Dictionary of DataFrames loaded from Excel files
+        data_loader: DataLoader instance with label mappings and class counts
+    """
+    logging.info("=== Computing Inter-Annotator Agreement Statistics ===")
+    try:
+        if krippendorff is None:
+            logging.warning("krippendorff library not found. Skipping inter-annotator agreement calculation.")
+            logging.warning("Install with: pip install krippendorff")
+            return
+        
+        criteria = {
+            'professionalism': 'Professionalism',
+            'relevance': 'Medical Relevance',
+            'ethics': 'Ethics',
+            'distraction': 'Contextual Distraction'
+        }
+        
+        iaa_results = {}
+        reliability_assessment = {}
+        
+        for criterion_key, criterion_label in criteria.items():
+            logging.info(f"\n--- Analyzing {criterion_key.upper()} ---")
+            
+            # Extract annotations from all judges for this criterion
+            annotations_list = []
+            judge_annotations = {}
+            judge_to_file = {}
+            
+            for file_name, df in data_dict.items():
+                if criterion_label in df.columns:
+                    annotations = df[criterion_label].values
+                    judge_name = file_name.replace('fuzzy.coding.data_', '').replace('.xlsx', '')
+                    judge_annotations[judge_name] = annotations
+                    judge_to_file[judge_name] = file_name
+                    annotations_list.append(annotations)
+            
+            if not annotations_list or len(annotations_list) < 2:
+                logging.warning(f"Insufficient judges ({len(annotations_list)}) for {criterion_key}")
+                continue
+            
+            # Map labels to numerical values using data_loader's mappings
+            label_mapping = data_loader.label_mappings.get(criterion_label, {})
+            mapped_data = {}
+            
+            for judge_name, annotations in judge_annotations.items():
+                mapped_annotations = []
+                for label in annotations:
+                    if pd.isna(label):
+                        mapped_annotations.append(np.nan)
+                    elif label in label_mapping:
+                        mapped_annotations.append(label_mapping[label])
+                    else:
+                        mapped_annotations.append(np.nan)
+                mapped_data[judge_name] = mapped_annotations
+            
+            judge_names = sorted(mapped_data.keys())
+            num_judges = len(judge_names)
+            num_units = len(next(iter(mapped_data.values())))
+            
+            # Compute Krippendorff's alpha for all available judges and all 5-judge subsets
+            alpha_summary = []
+            if num_judges < 5:
+                logging.warning(f"Only {num_judges} judges available for {criterion_key}; computing alpha for the available judges.")
+                try:
+                    annotation_matrix = np.array([mapped_data[judge] for judge in judge_names])
+                    full_alpha = krippendorff.alpha(annotation_matrix, level_of_measurement='ordinal')
+                    alpha_summary.append((tuple(judge_names), full_alpha))
+                    logging.info(f"Using judges: {', '.join(judge_to_file[j] for j in judge_names)} | Krippendorff's α: {full_alpha:.4f}")
+                    iaa_results[criterion_key] = {'krippendorff_alpha': full_alpha}
+                except Exception as e:
+                    logging.warning(f"Could not calculate Krippendorff's alpha for {criterion_key}: {e}")
+                    iaa_results[criterion_key] = {'krippendorff_alpha': None}
+            else:
+                all_combinations = list(combinations(judge_names, 5))
+                logging.info(f"{len(all_combinations)} five-judge combinations available for {criterion_key}.")
+                for combo in all_combinations:
+                    try:
+                        annotation_matrix = np.array([mapped_data[judge] for judge in combo])
+                        alpha_val = krippendorff.alpha(annotation_matrix, level_of_measurement='ordinal')
+                        alpha_summary.append((combo, alpha_val))
+                        used_files = ', '.join(judge_to_file[j] for j in combo)
+                        not_used_files = ', '.join(judge_to_file[j] for j in judge_names if j not in combo)
+                        logging.info(f"Used: {used_files} | Not used: {not_used_files} | Krippendorff's α: {alpha_val:.4f}")
+                    except Exception as e:
+                        logging.warning(f"Could not calculate Krippendorff's alpha for subset {combo} in {criterion_key}: {e}")
+                        alpha_summary.append((combo, None))
+                
+                # Save the top and bottom subset scores for easy inspection
+                valid_summaries = [(combo, alpha) for combo, alpha in alpha_summary if alpha is not None]
+                if valid_summaries:
+                    best_subset, best_alpha = max(valid_summaries, key=lambda x: x[1])
+                    worst_subset, worst_alpha = min(valid_summaries, key=lambda x: x[1])
+                    logging.info(f"Best 5-judge subset for {criterion_key}: {', '.join(judge_to_file[j] for j in best_subset)} = {best_alpha:.4f}")
+                    logging.info(f"Worst 5-judge subset for {criterion_key}: {', '.join(judge_to_file[j] for j in worst_subset)} = {worst_alpha:.4f}")
+                
+                # Also compute full-set alpha for reference if possible
+                try:
+                    annotation_matrix = np.array([mapped_data[judge] for judge in judge_names])
+                    full_alpha = krippendorff.alpha(annotation_matrix, level_of_measurement='ordinal')
+                    iaa_results[criterion_key] = {
+                        'krippendorff_alpha': full_alpha,
+                        'krippendorff_alpha_5_judge_subsets': alpha_summary
+                    }
+                    logging.info(f"Full judge set alpha ({num_judges} judges) for {criterion_key}: {full_alpha:.4f}")
+                except Exception as e:
+                    logging.warning(f"Could not calculate Krippendorff's alpha for full judge set for {criterion_key}: {e}")
+                    iaa_results[criterion_key] = {
+                        'krippendorff_alpha': None,
+                        'krippendorff_alpha_5_judge_subsets': alpha_summary
+                    }
+            
+            # Interpret the full-set Krippendorff's alpha if present
+            full_alpha = iaa_results[criterion_key].get('krippendorff_alpha')
+            if full_alpha is not None:
+                logging.info(f"Krippendorff's α (full judge set): {full_alpha:.4f}")
+                if full_alpha >= 0.81:
+                    reliability = "Excellent"
+                elif full_alpha >= 0.67:
+                    reliability = "Good"
+                elif full_alpha >= 0.51:
+                    reliability = "Moderate"
+                else:
+                    reliability = "Poor"
+                reliability_assessment[criterion_key] = reliability
+            else:
+                reliability_assessment[criterion_key] = "Unknown"
+            
+            # # Calculate Fleiss' kappa for multiple raters (requires fixed number of raters)
+            # try:
+            #     num_judges = len(judge_annotations)
+            #     num_units = len(next(iter(judge_annotations.values())))
+            #     num_classes = data_loader.num_classes.get(criterion_key, len(label_mapping))
+                
+            #     # Build contingency table for Fleiss' kappa
+            #     # Shape: (num_units, num_classes)
+            #     contingency_table = np.zeros((num_units, num_classes))
+                
+            #     for unit_idx in range(num_units):
+            #         for judge_name in sorted(judge_annotations.keys()):
+            #             label_value = mapped_data[judge_name][unit_idx]
+            #             if not pd.isna(label_value):
+            #                 label_value = int(label_value)
+            #                 if 0 <= label_value < num_classes:
+            #                     contingency_table[unit_idx, label_value] += 1
+                
+            #     # Calculate Fleiss' kappa
+            #     # Formula: (P_o - P_e) / (1 - P_e)
+            #     # where P_o is observed agreement and P_e is expected agreement
+            #     p_o = np.sum(np.sum(contingency_table * (contingency_table - 1), axis=1)) / (num_units * num_judges * (num_judges - 1))
+                
+            #     # Expected agreement
+            #     n_j = np.sum(contingency_table, axis=0)
+            #     p_e = np.sum(n_j * (n_j - 1)) / (num_units * num_judges * (num_judges - 1))
+                
+            #     if p_e < 1:
+            #         fleiss_kappa = (p_o - p_e) / (1 - p_e)
+            #     else:
+            #         fleiss_kappa = 0.0
+                
+            #     iaa_results[criterion_key]['fleiss_kappa'] = fleiss_kappa
+            #     logging.info(f"Fleiss' κ: {fleiss_kappa:.4f}")
+                
+            #     # Interpret Fleiss' kappa
+            #     if fleiss_kappa >= 0.81:
+            #         fleiss_reliability = "Excellent"
+            #     elif fleiss_kappa >= 0.61:
+            #         fleiss_reliability = "Substantial"
+            #     elif fleiss_kappa >= 0.41:
+            #         fleiss_reliability = "Moderate"
+            #     elif fleiss_kappa >= 0.21:
+            #         fleiss_reliability = "Fair"
+            #     else:
+            #         fleiss_reliability = "Poor"
+                
+            #     logging.info(f"Fleiss' κ Interpretation: {fleiss_reliability}")
+            #     logging.info(f"Number of judges: {num_judges}, Number of units: {num_units}, Number of classes: {num_classes}")
+                
+            # except Exception as e:
+            #     logging.warning(f"Could not calculate Fleiss' kappa for {criterion_key}: {e}")
+            #     iaa_results[criterion_key]['fleiss_kappa'] = None
+        
+        # Summary of inter-annotator agreement
+        logging.info("\n=== INTER-ANNOTATOR AGREEMENT SUMMARY ===")
+        logging.info("Interpretation guidelines:")
+        logging.info("  Krippendorff's α: > 0.81 (Excellent), 0.67-0.81 (Good), 0.51-0.67 (Moderate), < 0.51 (Poor)")
+        # logging.info("  Fleiss' κ: > 0.81 (Excellent), 0.61-0.81 (Substantial), 0.41-0.61 (Moderate), 0.21-0.41 (Fair), < 0.21 (Poor)")
+        logging.info("\nRAW DATA RELIABILITY ASSESSMENT:")
+        for criterion, reliability in reliability_assessment.items():
+            alpha_val = iaa_results[criterion].get('krippendorff_alpha', 'N/A')
+            # kappa_val = iaa_results[criterion].get('fleiss_kappa', 'N/A')
+            logging.info(f"  {criterion.upper()}: Krippendorff's α = {alpha_val if isinstance(alpha_val, str) else f'{alpha_val:.4f}'}, ")
+                        # f"Fleiss' κ = {kappa_val if isinstance(kappa_val, str) else f'{kappa_val:.4f}'} [{reliability}]")
+        
+        logging.info("\nDATA RELIABILITY EXPLANATION:")
+        logging.info("  - High inter-annotator agreement (α, κ > 0.67) indicates reliable and consistent annotations across judges.")
+        logging.info("  - Moderate agreement (0.51 < α < 0.67) suggests acceptable reliability but may require review of edge cases.")
+        logging.info("  - Low agreement (α < 0.51) indicates potential issues: unclear criteria, ambiguous examples, or inconsistent judge interpretation.")
+        logging.info("  - These statistics validate the quality of raw data before model training.")
+        
+    except Exception as e:
+        logging.error(f"Error computing inter-annotator agreement: {e}")
+
 def main():
     """Main function to run the full workflow."""
     # Parse arguments
@@ -244,6 +460,9 @@ def main():
     # Load Excel files
     data_dict = data_loader.load_excel_files(pattern="fuzzy.coding.data*.xlsx")
     
+    # Calculate inter-annotator agreement statistics
+    # compute_inter_annotator_agreement(data_dict, data_loader)
+   
     # Merge and report conflicts first
     merged_data, conflicts_df = data_loader.merge_and_report_conflicts(data_dict, conflict_output_path='conflicts_output.xlsx')
     if merged_data is None or merged_data.empty:

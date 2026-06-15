@@ -45,6 +45,8 @@ best_model/
 
 # Processed data
 data/processed/
+data/
+data_backup/
 
 # Unit test / coverage reports
 htmlcov/
