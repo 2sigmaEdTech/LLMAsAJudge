@@ -74,6 +74,7 @@ venv.bak/
 *.log
 *.sql
 *.sqlite
+logs/
 
 # Editor specific files
 .idea/

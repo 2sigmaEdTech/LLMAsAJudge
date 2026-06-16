@@ -72,6 +72,39 @@ def ensure_local_model(model_name, models_dir="models"):
             pass
         return model_name
 
+
+def read_criterion_data(criterion, base_dir="data"):
+    """
+    Read criterion-specific train/validation/test CSV files from `data/<criterion>`.
+
+    Args:
+        criterion: criterion name (e.g. 'professionalism', 'relevance', 'ethics', 'distraction')
+        base_dir: base data directory containing criterion folders
+
+    Returns:
+        Dictionary with keys 'train', 'val', 'test' holding DataFrames or None.
+    """
+    criterion_dir = os.path.join(base_dir, criterion)
+    if not os.path.isdir(criterion_dir):
+        raise FileNotFoundError(f"Criterion data directory not found: {criterion_dir}")
+
+    splits = {
+        'train': os.path.join(criterion_dir, f"{criterion}_train.csv"),
+        'val': os.path.join(criterion_dir, f"{criterion}_val.csv"),
+        'test': os.path.join(criterion_dir, f"{criterion}_test.csv")
+    }
+
+    data = {}
+    for split_name, split_path in splits.items():
+        if os.path.exists(split_path):
+            data[split_name] = pd.read_csv(split_path)
+        else:
+            logging.warning(f"Missing {split_name} split for criterion '{criterion}' at {split_path}")
+            data[split_name] = None
+
+    return data
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='LLM-as-a-Fuzzy-Judge: Fine-tuning for clinical evaluation')

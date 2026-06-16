@@ -84,7 +84,8 @@ class BaseModel:
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name, 
             num_labels=num_labels,
-            pad_token_id=self.tokenizer.pad_token_id
+            pad_token_id=self.tokenizer.pad_token_id,
+            ignore_mismatched_sizes=True
         )
         if pad_token_added:
             self.model.resize_token_embeddings(len(self.tokenizer))
