@@ -532,6 +532,91 @@ def compute_inter_annotator_agreement(data_dict, data_loader):
     except Exception as e:
         logging.error(f"Error computing inter-annotator agreement: {e}")
 
+
+def compare_models(criterion, data_loader, args, hybrid_model_dir, base_model_name=None):
+    """
+    Compare hybrid (SFT + prompt) model against a pure prompt-based baseline
+    and a majority-class predictor for a given criterion.
+    Returns a DataFrame summarizing metrics for each approach.
+    """
+    logging.info(f"\n=== Comparing models for {criterion.title()} ===")
+
+    # Load processed splits
+    criterion_processed_dir = os.path.join(args.processed_dir, criterion)
+    train_df = pd.read_csv(os.path.join(criterion_processed_dir, f"{criterion}_train.csv"))
+    test_df = pd.read_csv(os.path.join(criterion_processed_dir, f"{criterion}_test.csv"))
+
+    text_col = data_loader.get_text_column()
+    label_col = data_loader.get_label_column(criterion)
+    num_classes = data_loader.get_num_classes(criterion)
+
+    test_texts = test_df[text_col].tolist()
+    test_labels = test_df[label_col].tolist()
+
+    # Use same prompt template as training/fine-tuning
+    if criterion == 'professionalism':
+        prompt_template = "Judge the professionalism of this message: '{user_message}'. Answer with Unprofessional, Borderline, or Appropriate."
+    elif criterion == 'relevance':
+        prompt_template = "Is the following message relevant to the medical context? '{user_message}'. Answer with 'Irrelevant', 'Partially relevant', 'Relevant'"
+    elif criterion == 'ethics':
+        prompt_template = "Evaluate the ethical implications of this message: '{user_message}'. Answer with 'Dangerous', 'Unsafe', 'Questionable', 'Mostly safe', 'Safe'."
+    elif criterion == 'distraction':
+        prompt_template = "Evaluate the distraction level of this message: '{user_message}'. Answer with 'Highly distracting', 'Moderately distracting', 'Questionable', 'Not distracting'"
+    else:
+        prompt_template = None
+
+    results = []
+
+    # 1) Hybrid model (SFT + prompt engineering)
+    try:
+        hybrid = BaseModel(model_name=hybrid_model_dir, num_labels=num_classes)
+        hybrid.load_model(hybrid_model_dir)
+        preds_hybrid, conf_hybrid = hybrid.predict(test_texts, return_confidence=True, prompt_template=prompt_template)
+        acc_h = accuracy_score(test_labels, preds_hybrid)
+        f1_h = f1_score(test_labels, preds_hybrid, average='weighted')
+        kappa_h = cohen_kappa_score(test_labels, preds_hybrid)
+        results.append({'approach': 'hybrid_sft_prompt', 'accuracy': acc_h, 'weighted_f1': f1_h, 'cohen_kappa': kappa_h, 'mean_confidence': float(np.mean(conf_hybrid))})
+        plot_confusion_matrix(test_labels, preds_hybrid, class_names=None)
+        plot_classification_report(test_labels, preds_hybrid, class_names=None)
+    except Exception as e:
+        logging.warning(f"Could not evaluate hybrid model for {criterion}: {e}")
+
+    # 2) Pure prompt-based baseline (pretrained model with prompt only)
+    try:
+        base_name = base_model_name or args.model_name
+        prompt_only = BaseModel(model_name=base_name, num_labels=num_classes)
+        # don't load any fine-tuned weights - use pretrained head as-is
+        preds_prompt, conf_prompt = prompt_only.predict(test_texts, return_confidence=True, prompt_template=prompt_template)
+        acc_p = accuracy_score(test_labels, preds_prompt)
+        f1_p = f1_score(test_labels, preds_prompt, average='weighted')
+        kappa_p = cohen_kappa_score(test_labels, preds_prompt)
+        results.append({'approach': 'prompt_only', 'accuracy': acc_p, 'weighted_f1': f1_p, 'cohen_kappa': kappa_p, 'mean_confidence': float(np.mean(conf_prompt))})
+        plot_confusion_matrix(test_labels, preds_prompt, class_names=None)
+        plot_classification_report(test_labels, preds_prompt, class_names=None)
+    except Exception as e:
+        logging.warning(f"Could not evaluate prompt-only baseline for {criterion}: {e}")
+
+    # 3) Majority class predictor (train-set majority)
+    try:
+        majority_label = int(train_df[label_col].mode().iloc[0])
+        preds_majority = np.array([majority_label] * len(test_texts))
+        # confidence as prevalence of majority class in training set
+        maj_conf = float((train_df[label_col] == majority_label).mean())
+        acc_m = accuracy_score(test_labels, preds_majority)
+        f1_m = f1_score(test_labels, preds_majority, average='weighted')
+        kappa_m = cohen_kappa_score(test_labels, preds_majority)
+        results.append({'approach': 'majority_class', 'accuracy': acc_m, 'weighted_f1': f1_m, 'cohen_kappa': kappa_m, 'mean_confidence': maj_conf})
+        plot_confusion_matrix(test_labels, preds_majority, class_names=None)
+        plot_classification_report(test_labels, preds_majority, class_names=None)
+    except Exception as e:
+        logging.warning(f"Could not evaluate majority-class baseline for {criterion}: {e}")
+
+    results_df = pd.DataFrame(results)
+    logging.info(f"\n=== Comparison results for {criterion.title()} ===")
+    logging.info(results_df.to_string(index=False))
+
+    return results_df
+
 def main():
     """Main function to run the full workflow."""
     # Parse arguments
@@ -595,6 +680,13 @@ def main():
     # Further fine-tune with prompt engineering
     for criterion, model_path in models.items():
         further_finetune_with_prompt(criterion, data_loader, args, model_path)
+
+        # After further fine-tuning with prompt engineering, compare approaches
+        hybrid_dir = os.path.join(args.output_dir, criterion, 'best_model')
+        try:
+            compare_models(criterion, data_loader, args, hybrid_dir, base_model_name=args.model_name)
+        except Exception as e:
+            logging.warning(f"Comparison failed for {criterion}: {e}")
     
     logging.info("\n=== Done! ===")
 

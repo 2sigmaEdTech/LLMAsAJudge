@@ -236,7 +236,7 @@ class BaseModel:
         
         return avg_val_loss, accuracy
     
-    def predict(self, texts, max_length=512, batch_size=8, return_confidence=True):
+    def predict(self, texts, max_length=512, batch_size=8, return_confidence=True, prompt_template=None):
         """
         Make predictions on new texts.
         
@@ -250,7 +250,7 @@ class BaseModel:
             Numpy array of predictions (and confidences if requested)
         """
         self.model.eval()
-        dataset = TextDataset(texts, [0] * len(texts), self.tokenizer, max_length=max_length)  # Dummy labels
+        dataset = TextDataset(texts, [0] * len(texts), self.tokenizer, max_length=max_length, prompt_template=prompt_template)  # Dummy labels
         loader = DataLoader(dataset, batch_size=batch_size)
         
         all_preds = []
